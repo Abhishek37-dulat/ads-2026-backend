@@ -27,6 +27,17 @@ spring:
     consumer:
       group-id: relay
       auto-offset-reset: earliest
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASS:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: ${SMTP_SSL:true}        # port 465 (SSL)
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}  # set true + SSL false for port 587
+      mail.smtp.connectiontimeout: 8000
+      mail.smtp.timeout: 8000
   graphql:
     graphiql:
       enabled: true
@@ -48,6 +59,17 @@ relay:
     # platform Ops-console admin, ensured at startup; CHANGE in production
     email: ${RELAY_ADMIN_EMAIL:admin@relay.dev}
     password: ${RELAY_ADMIN_PASSWORD:admin12345}
+  app:
+    base-url: ${APP_BASE_URL:http://localhost:8081}
+  mail:
+    from: ${MAIL_FROM:no-reply@relay.dev}
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    # empty → derive redirect from the request host (multi-domain friendly)
+    redirect-uri: ${GOOGLE_REDIRECT_URI:}
+  sms:
+    fast2sms-key: ${FAST2SMS_API_KEY:}
   clickhouse:
     url: ${RELAY_CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123/relay}
     user: ${RELAY_CLICKHOUSE_USER:relay}

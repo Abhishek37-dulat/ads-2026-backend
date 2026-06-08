@@ -21,6 +21,17 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
+    @ExceptionHandler(com.relay.auth.AuthService.EmailNotVerifiedException.class)
+    public ResponseEntity<Map<String, Object>> notVerified(com.relay.auth.AuthService.EmailNotVerifiedException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+            "timestamp", OffsetDateTime.now().toString(),
+            "status", 403,
+            "error", "Forbidden",
+            "message", e.getMessage(),
+            "needsVerification", true,
+            "email", e.getEmail()));
+    }
+
     private ResponseEntity<Map<String, Object>> body(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(Map.of(
             "timestamp", OffsetDateTime.now().toString(),

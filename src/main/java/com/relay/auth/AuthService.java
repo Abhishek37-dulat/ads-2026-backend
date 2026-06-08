@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,22 +31,31 @@ public class AuthService {
     private static final UUID DEMO_WORKSPACE = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final String DEMO_WORKSPACE_NAME = "Northstar Plumbing";
     private static final Duration OTP_TTL = Duration.ofMinutes(5);
+    private static final Duration VERIFY_TTL = Duration.ofHours(24);
 
     private final AppUserRepository users;
     private final JwtService jwt;
     private final StringRedisTemplate redis;
     private final PasswordEncoder passwordEncoder;
+    private final MailService mail;
+    private final SmsService sms;
+    private final String appBaseUrl;
 
     public AuthService(AppUserRepository users, JwtService jwt, StringRedisTemplate redis,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder, MailService mail, SmsService sms,
+                       @Value("${relay.app.base-url:http://localhost:8081}") String appBaseUrl) {
         this.users = users;
         this.jwt = jwt;
         this.redis = redis;
         this.passwordEncoder = passwordEncoder;
+        this.mail = mail;
+        this.sms = sms;
+        this.appBaseUrl = appBaseUrl;
     }
 
+    /** Create an unverified password account and email a verification link. No session yet. */
     @Transactional
-    public AuthResult register(String email, String password, String name) {
+    public RegisterResult register(String email, String password, String name) {
         String e = normalizeEmail(email);
         if (password == null || password.length() < 8) {
             throw new IllegalArgumentException("Password must be at least 8 characters");
@@ -59,11 +69,13 @@ public class AuthService {
         u.setEmail(e);
         u.setName(name == null || name.isBlank() ? e.split("@")[0] : name.trim());
         u.setPasswordHash(passwordEncoder.encode(password));
+        u.setEmailVerified(false);
         u.setCreatedAt(OffsetDateTime.now());
-        return result(users.save(u));
+        users.save(u);
+        return sendVerification(u);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AuthResult login(String email, String password) {
         AppUser u = users.findByEmail(normalizeEmail(email))
             .orElseThrow(() -> new IllegalArgumentException("No account found for this email"));
@@ -73,7 +85,47 @@ public class AuthService {
         if (password == null || !passwordEncoder.matches(password, u.getPasswordHash())) {
             throw new IllegalArgumentException("Incorrect email or password");
         }
+        if (!u.isEmailVerified()) {
+            throw new EmailNotVerifiedException(u.getEmail());
+        }
         return result(u);
+    }
+
+    /** Issue a fresh verification token and email it. */
+    @Transactional
+    public RegisterResult sendVerification(AppUser u) {
+        String token = UUID.randomUUID().toString().replace("-", "");
+        redis.opsForValue().set(verifyKey(token), u.getEmail(), VERIFY_TTL);
+        String link = appBaseUrl + "/api/auth/verify?token=" + token;
+        boolean sent = mail.sendVerification(u.getEmail(), u.getName(), link);
+        // In dev without SMTP, surface the link so the flow is still testable.
+        return new RegisterResult(u.getEmail(), sent, sent ? null : link);
+    }
+
+    @Transactional
+    public RegisterResult resendVerification(String email) {
+        AppUser u = users.findByEmail(normalizeEmail(email))
+            .orElseThrow(() -> new IllegalArgumentException("No account found for this email"));
+        if (u.isEmailVerified()) {
+            throw new IllegalArgumentException("This email is already verified — just sign in");
+        }
+        return sendVerification(u);
+    }
+
+    /** Consume a verification token → mark the user verified. Returns their email. */
+    @Transactional
+    public String verifyEmail(String token) {
+        String key = verifyKey(token);
+        String email = redis.opsForValue().get(key);
+        if (email == null) {
+            throw new IllegalArgumentException("This verification link is invalid or expired");
+        }
+        redis.delete(key);
+        AppUser u = users.findByEmail(email)
+            .orElseThrow(() -> new IllegalArgumentException("Account no longer exists"));
+        u.setEmailVerified(true);
+        users.save(u);
+        return email;
     }
 
     private static String normalizeEmail(String email) {
@@ -83,13 +135,20 @@ public class AuthService {
         return email.trim().toLowerCase();
     }
 
-    /** Generate + store an OTP for a phone number. Returns the code (demo: shown to the user). */
+    /**
+     * Generate + store an OTP and text it via Fast2SMS. Returns the code only when SMS isn't
+     * configured (dev fallback shown in the UI); returns null once a real SMS was dispatched.
+     */
     public String startOtp(String phone) {
         String normalized = normalizePhone(phone);
         String code = String.format("%06d", ThreadLocalRandom.current().nextInt(0, 1_000_000));
         redis.opsForValue().set(otpKey(normalized), code, OTP_TTL);
-        log.info("[otp] code for {} is {}", normalized, code); // demo only — never log codes in prod
-        return code;
+        boolean sent = sms.sendOtp(normalized, code);
+        if (!sent) {
+            log.info("[otp] (no SMS) code for {} is {}", normalized, code); // dev only
+            return code;
+        }
+        return null;
     }
 
     @Transactional
@@ -136,6 +195,7 @@ public class AuthService {
         }
         u.setName(name == null || name.isBlank() ? "Platform Admin" : name);
         u.setAdmin(true);
+        u.setEmailVerified(true);
         if (password != null && !password.isBlank()) {
             u.setPasswordHash(passwordEncoder.encode(password));
         }
@@ -143,6 +203,7 @@ public class AuthService {
         log.info("[auth] admin account ensured: {}", e);
     }
 
+    /** Google/OTP identities are inherently verified (provider attests the identity). */
     private AppUser findOrCreate(String email, String name) {
         return users.findByEmail(email).orElseGet(() -> {
             AppUser u = new AppUser();
@@ -150,9 +211,14 @@ public class AuthService {
             u.setOrgId(DEMO_ORG);
             u.setEmail(email);
             u.setName(name);
+            u.setEmailVerified(true);
             u.setCreatedAt(OffsetDateTime.now());
             return users.save(u);
         });
+    }
+
+    private static String verifyKey(String token) {
+        return "verify:" + token;
     }
 
     private static String normalizePhone(String phone) {
@@ -172,4 +238,17 @@ public class AuthService {
 
     public record AuthResult(String token, UUID userId, String email, String name,
                              UUID workspaceId, String workspaceName, boolean admin) {}
+
+    /** Outcome of registration — verification pending, no session issued yet. */
+    public record RegisterResult(String email, boolean emailSent, String devVerifyUrl) {}
+
+    /** Thrown when a verified-email-required account tries to sign in unverified. */
+    public static class EmailNotVerifiedException extends RuntimeException {
+        private final String email;
+        public EmailNotVerifiedException(String email) {
+            super("Please verify your email first — check your inbox.");
+            this.email = email;
+        }
+        public String getEmail() { return email; }
+    }
 }

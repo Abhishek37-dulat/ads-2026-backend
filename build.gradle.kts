@@ -56,6 +56,9 @@ dependencies {
     // --- messaging
     implementation("org.springframework.kafka:spring-kafka")
 
+    // --- email (SMTP)
+    implementation("org.springframework.boot:spring-boot-starter-mail")
+
     // --- modulith
     implementation("org.springframework.modulith:spring-modulith-starter-core")
     runtimeOnly("org.springframework.modulith:spring-modulith-actuator")

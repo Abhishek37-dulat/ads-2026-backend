@@ -22,12 +22,21 @@ public class AuthController {
         this.auth = auth;
     }
 
-    /** Send an OTP to a phone. Demo: the code is returned as {@code devCode} (no real SMS). */
+    /** Send an OTP to a phone via SMS (Fast2SMS). Falls back to a dev code if SMS isn't configured. */
     @PostMapping("/otp/start")
     public Map<String, Object> startOtp(@RequestBody OtpStartRequest req) {
-        String code = auth.startOtp(req.phone());
-        return Map.of("sent", true, "devCode", code,
-            "message", "Demo mode: use this code (a real build would text it).");
+        String devCode = auth.startOtp(req.phone());
+        Map<String, Object> out = new java.util.HashMap<>();
+        out.put("sent", true);
+        if (devCode != null) {
+            out.put("devCode", devCode);
+            out.put("channel", "demo");
+            out.put("message", "SMS not configured — use this code.");
+        } else {
+            out.put("channel", "sms");
+            out.put("message", "We texted you a 6-digit code.");
+        }
+        return out;
     }
 
     @PostMapping("/otp/verify")
@@ -35,9 +44,21 @@ public class AuthController {
         return view(auth.verifyOtp(req.phone(), req.code()));
     }
 
+    /** Create a password account — no session; an email verification link is sent first. */
     @PostMapping("/register")
     public Map<String, Object> register(@RequestBody RegisterRequest req) {
-        return view(auth.register(req.email(), req.password(), req.name()));
+        var r = auth.register(req.email(), req.password(), req.name());
+        Map<String, Object> out = new java.util.HashMap<>();
+        out.put("pendingVerification", true);
+        out.put("email", r.email());
+        out.put("emailSent", r.emailSent());
+        out.put("message", r.emailSent()
+            ? "Check your inbox to verify your email, then sign in."
+            : "Account created. Email isn't configured — use the verification link below.");
+        if (r.devVerifyUrl() != null) {
+            out.put("devVerifyUrl", r.devVerifyUrl());
+        }
+        return out;
     }
 
     @PostMapping("/login")
@@ -45,10 +66,17 @@ public class AuthController {
         return view(auth.login(req.email(), req.password()));
     }
 
-    /** Demo Google sign-in — accepts an optional email/name, else a demo account. */
-    @PostMapping("/google")
-    public Map<String, Object> google(@RequestBody(required = false) GoogleRequest req) {
-        return view(auth.googleLogin(req == null ? null : req.email(), req == null ? null : req.name()));
+    /** Resend the verification email for an unverified account. */
+    @PostMapping("/verify/resend")
+    public Map<String, Object> resend(@RequestBody ResendRequest req) {
+        var r = auth.resendVerification(req.email());
+        Map<String, Object> out = new java.util.HashMap<>();
+        out.put("emailSent", r.emailSent());
+        out.put("message", r.emailSent() ? "Verification email re-sent." : "Email not configured.");
+        if (r.devVerifyUrl() != null) {
+            out.put("devVerifyUrl", r.devVerifyUrl());
+        }
+        return out;
     }
 
     @GetMapping("/me")
@@ -82,5 +110,5 @@ public class AuthController {
 
     public record OtpVerifyRequest(@NotBlank String phone, @NotBlank String code) {}
 
-    public record GoogleRequest(String email, String name) {}
+    public record ResendRequest(@NotBlank String email) {}
 }

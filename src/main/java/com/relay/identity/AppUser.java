@@ -36,6 +36,10 @@ public class AppUser {
     @Column(name = "is_admin", nullable = false)
     private boolean admin = false;
 
+    /** Email verified — required before a password user can sign in. */
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 }
