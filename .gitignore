@@ -1,0 +1,11 @@
+.gradle/
+build/
+
+# local environment
+.env
+.env*.local
+
+# IDE and system files
+.idea/
+.vscode/
+.DS_Store
