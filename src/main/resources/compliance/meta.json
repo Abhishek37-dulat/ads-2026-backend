@@ -1,0 +1,10 @@
+{
+  "platform": "meta",
+  "version": "2026-05",
+  "rules": [
+    { "code": "HEADLINE_LEN", "field": "headline", "max": 40, "severity": "block" },
+    { "code": "BODY_LEN", "field": "body", "max": 125, "severity": "warn" },
+    { "code": "RESTRICTED_KEYWORDS", "field": "body", "deny": ["guaranteed", "miracle", "cure"], "severity": "block" },
+    { "code": "LEADFORM_PRIVACY", "requireField": "destination.privacyUrl", "whenObjective": "LEADS", "severity": "warn" }
+  ]
+}

@@ -1,0 +1,6 @@
+# Active when SPRING_PROFILES_ACTIVE=docker. Values come from compose env; this profile
+# exists so logging/host defaults differ from local without overriding the env-driven config.
+logging:
+  level:
+    com.relay: INFO
+    org.springframework.web: INFO

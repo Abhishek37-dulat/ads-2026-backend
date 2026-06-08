@@ -1,0 +1,15 @@
+# Dashboard reads (GraphQL collapses round-trips). Commands stay REST.
+
+type Query {
+  "Unified cross-platform metric rollups, optionally for one campaign."
+  analytics(campaignId: ID): [PlatformMetrics!]!
+}
+
+type PlatformMetrics {
+  platform: String!
+  impressions: Int!
+  clicks: Int!
+  spend: Float!
+  conversions: Int!
+  revenue: Float!
+}

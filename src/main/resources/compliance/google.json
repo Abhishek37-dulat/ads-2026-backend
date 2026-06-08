@@ -1,0 +1,10 @@
+{
+  "platform": "google",
+  "version": "2026-05",
+  "rules": [
+    { "code": "HEADLINE_LEN", "field": "headline", "max": 30, "severity": "block" },
+    { "code": "BODY_LEN", "field": "body", "max": 90, "severity": "warn" },
+    { "code": "RESTRICTED_KEYWORDS", "field": "body", "deny": ["guaranteed", "best ever"], "severity": "warn" },
+    { "code": "CALLS_DESTINATION", "requireField": "destination.value", "whenObjective": "CALLS", "severity": "block" }
+  ]
+}
