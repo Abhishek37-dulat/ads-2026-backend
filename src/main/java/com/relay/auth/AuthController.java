@@ -62,14 +62,16 @@ public class AuthController {
             "email", p.email(),
             "name", p.name(),
             "workspaceId", p.workspaceId().toString(),
-            "workspaceName", p.workspaceName());
+            "workspaceName", p.workspaceName(),
+            "admin", p.admin());
     }
 
     private Map<String, Object> view(AuthResult r) {
         return Map.of(
             "token", r.token(),
             "user", Map.of("id", r.userId().toString(), "email", r.email(), "name", r.name()),
-            "workspace", Map.of("id", r.workspaceId().toString(), "name", r.workspaceName()));
+            "workspace", Map.of("id", r.workspaceId().toString(), "name", r.workspaceName()),
+            "admin", r.admin());
     }
 
     public record RegisterRequest(@NotBlank String email, @NotBlank String password, String name) {}
