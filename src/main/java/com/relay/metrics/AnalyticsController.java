@@ -61,7 +61,7 @@ public class AnalyticsController {
                 rows++;
             }
         }
-        realtime.broadcast("metrics", Map.of("campaignId", campaignId.toString(), "rows", rows));
+        realtime.broadcast(ws, "metrics", Map.of("campaignId", campaignId.toString(), "rows", rows));
         return Map.of("seeded", rows, "deployments", deps.size());
     }
 }

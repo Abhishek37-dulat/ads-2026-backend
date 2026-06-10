@@ -1,7 +1,9 @@
 package com.relay.auth;
 
 import com.relay.auth.AuthService.AuthResult;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
+import java.time.Duration;
 import java.util.Map;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -11,20 +13,23 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Login flows: phone OTP + (demo) Google. All under /v1/auth/** which is public. */
+/** Public login flows plus the authenticated current-session endpoint. */
 @RestController
 @RequestMapping("/v1/auth")
 public class AuthController {
 
     private final AuthService auth;
+    private final AuthRateLimiter rateLimiter;
 
-    public AuthController(AuthService auth) {
+    public AuthController(AuthService auth, AuthRateLimiter rateLimiter) {
         this.auth = auth;
+        this.rateLimiter = rateLimiter;
     }
 
     /** Send an OTP to a phone via SMS (Fast2SMS). Falls back to a dev code if SMS isn't configured. */
     @PostMapping("/otp/start")
-    public Map<String, Object> startOtp(@RequestBody OtpStartRequest req) {
+    public Map<String, Object> startOtp(@RequestBody OtpStartRequest req, HttpServletRequest request) {
+        rateLimiter.check("otp-start", request, 5, Duration.ofMinutes(10));
         String devCode = auth.startOtp(req.phone());
         Map<String, Object> out = new java.util.HashMap<>();
         out.put("sent", true);
@@ -40,13 +45,15 @@ public class AuthController {
     }
 
     @PostMapping("/otp/verify")
-    public Map<String, Object> verifyOtp(@RequestBody OtpVerifyRequest req) {
+    public Map<String, Object> verifyOtp(@RequestBody OtpVerifyRequest req, HttpServletRequest request) {
+        rateLimiter.check("otp-verify", request, 10, Duration.ofMinutes(10));
         return view(auth.verifyOtp(req.phone(), req.code()));
     }
 
     /** Create a password account — no session; an email verification link is sent first. */
     @PostMapping("/register")
-    public Map<String, Object> register(@RequestBody RegisterRequest req) {
+    public Map<String, Object> register(@RequestBody RegisterRequest req, HttpServletRequest request) {
+        rateLimiter.check("register", request, 5, Duration.ofHours(1));
         var r = auth.register(req.email(), req.password(), req.name());
         Map<String, Object> out = new java.util.HashMap<>();
         out.put("pendingVerification", true);
@@ -62,13 +69,15 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public Map<String, Object> login(@RequestBody LoginRequest req) {
+    public Map<String, Object> login(@RequestBody LoginRequest req, HttpServletRequest request) {
+        rateLimiter.check("login", request, 10, Duration.ofMinutes(10));
         return view(auth.login(req.email(), req.password()));
     }
 
     /** Resend the verification email for an unverified account. */
     @PostMapping("/verify/resend")
-    public Map<String, Object> resend(@RequestBody ResendRequest req) {
+    public Map<String, Object> resend(@RequestBody ResendRequest req, HttpServletRequest request) {
+        rateLimiter.check("verify-resend", request, 5, Duration.ofHours(1));
         var r = auth.resendVerification(req.email());
         Map<String, Object> out = new java.util.HashMap<>();
         out.put("emailSent", r.emailSent());

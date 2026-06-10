@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -41,16 +42,18 @@ public class PublicAuthController {
     private static final String USERINFO_URI = "https://www.googleapis.com/oauth2/v3/userinfo";
 
     private final AuthService auth;
+    private final AuthRateLimiter rateLimiter;
     private final String clientId;
     private final String clientSecret;
     private final String redirectUriOverride;
     private final RestClient http = RestClient.create();
 
-    public PublicAuthController(AuthService auth,
+    public PublicAuthController(AuthService auth, AuthRateLimiter rateLimiter,
                                @Value("${relay.google.client-id:}") String clientId,
                                @Value("${relay.google.client-secret:}") String clientSecret,
                                @Value("${relay.google.redirect-uri:}") String redirectUriOverride) {
         this.auth = auth;
+        this.rateLimiter = rateLimiter;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.redirectUriOverride = redirectUriOverride;
@@ -59,6 +62,7 @@ public class PublicAuthController {
     // -------------------------------------------------- Google: start
     @GetMapping("/google/start")
     public void googleStart(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        rateLimiter.check("google-start", request, 10, Duration.ofMinutes(10));
         if (!StringUtils.hasText(clientId)) {
             response.sendRedirect(base(request) + "/login?error=google_not_configured");
             return;

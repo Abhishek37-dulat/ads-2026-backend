@@ -32,6 +32,21 @@ public class GlobalExceptionHandler {
             "email", e.getEmail()));
     }
 
+    @ExceptionHandler(com.relay.auth.AuthRateLimiter.RateLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> rateLimited(RuntimeException e) {
+        return body(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    @ExceptionHandler(com.relay.auth.AuthService.DeliveryUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> unavailable(RuntimeException e) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
+    }
+
+    @ExceptionHandler(com.relay.connection.PlatformConnectionUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> platformUnavailable(RuntimeException e) {
+        return body(HttpStatus.NOT_IMPLEMENTED, e.getMessage());
+    }
+
     private ResponseEntity<Map<String, Object>> body(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(Map.of(
             "timestamp", OffsetDateTime.now().toString(),

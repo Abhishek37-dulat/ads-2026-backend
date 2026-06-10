@@ -21,10 +21,12 @@ repositories {
 
 extra["springModulithVersion"] = "2.0.0"
 extra["temporalVersion"] = "1.35.0"
+extra["testcontainersVersion"] = "1.21.3"
 
 dependencyManagement {
     imports {
         mavenBom("org.springframework.modulith:spring-modulith-bom:${property("springModulithVersion")}")
+        mavenBom("org.testcontainers:testcontainers-bom:${property("testcontainersVersion")}")
     }
 }
 

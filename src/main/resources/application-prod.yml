@@ -1,0 +1,27 @@
+spring:
+  graphql:
+    graphiql:
+      enabled: false
+
+server:
+  forward-headers-strategy: framework
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+relay:
+  auth:
+    expose-dev-secrets: false
+    require-delivery: true

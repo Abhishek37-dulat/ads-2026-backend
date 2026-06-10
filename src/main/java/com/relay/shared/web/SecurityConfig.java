@@ -43,13 +43,20 @@ public class SecurityConfig {
                 (req, res, ex) -> res.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers(
-                    "/v1/auth/**",
-                    "/api/**",
-                    "/v1/stream",
-                    "/actuator/**",
-                    "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**",
-                    "/graphiql/**").permitAll()
+                .requestMatchers(HttpMethod.POST,
+                    "/v1/auth/otp/start",
+                    "/v1/auth/otp/verify",
+                    "/v1/auth/register",
+                    "/v1/auth/login",
+                    "/v1/auth/verify/resend",
+                    "/api/sms/dlr",
+                    "/api/whatsapp/webhook").permitAll()
+                .requestMatchers(HttpMethod.GET,
+                    "/api/auth/google/start",
+                    "/api/auth/google/callback",
+                    "/api/auth/verify").permitAll()
+                .requestMatchers("/v1/stream").permitAll()
+                .requestMatchers("/v1/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

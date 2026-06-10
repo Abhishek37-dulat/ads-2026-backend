@@ -44,7 +44,7 @@ public class LaunchActivitiesImpl implements LaunchActivities {
     public boolean preflightHasBlocking(LaunchPlan plan) {
         List<Finding> findings = compliance.evaluate(plan.brief(), plan.platforms());
         boolean blocking = compliance.hasBlocking(findings);
-        realtime.broadcast("launch", Map.of(
+        realtime.broadcast(plan.workspaceId(), "launch", Map.of(
             "campaignId", plan.campaignId().toString(),
             "phase", "preflight",
             "blocking", blocking,
@@ -57,17 +57,17 @@ public class LaunchActivitiesImpl implements LaunchActivities {
         WorkspaceContext.set(plan.workspaceId());
         try {
             deployments.markSubmitting(item.deploymentId());
-            broadcast(plan.campaignId(), item.platform(), "submitting", null);
+            broadcast(plan.workspaceId(), plan.campaignId(), item.platform(), "submitting", null);
             try {
                 DeploymentResult result =
                     adapters.get(item.platform()).submit(plan.brief(), item.idemKey());
                 deployments.markLive(item.deploymentId(), result.extCampaignId());
-                broadcast(plan.campaignId(), item.platform(), "live", result.extCampaignId());
+                broadcast(plan.workspaceId(), plan.campaignId(), item.platform(), "live", result.extCampaignId());
                 return "live";
             } catch (Exception ex) {
                 AdapterError error = adapters.get(item.platform()).classifyError(ex);
                 deployments.markFailed(item.deploymentId(), error.message());
-                broadcast(plan.campaignId(), item.platform(), "failed", error.message());
+                broadcast(plan.workspaceId(), plan.campaignId(), item.platform(), "failed", error.message());
                 // map non-retryable kinds to the workflow's doNotRetry types
                 String type = switch (error.kind()) {
                     case POLICY -> "POLICY_REJECTED";
@@ -92,7 +92,7 @@ public class LaunchActivitiesImpl implements LaunchActivities {
         }
     }
 
-    private void broadcast(UUID campaignId, Platform platform, String status, String detail) {
+    private void broadcast(UUID workspaceId, UUID campaignId, Platform platform, String status, String detail) {
         var payload = new java.util.HashMap<String, Object>();
         payload.put("campaignId", campaignId.toString());
         payload.put("platform", platform.name());
@@ -100,6 +100,6 @@ public class LaunchActivitiesImpl implements LaunchActivities {
         if (detail != null) {
             payload.put("detail", detail);
         }
-        realtime.broadcast("launch", payload);
+        realtime.broadcast(workspaceId, "launch", payload);
     }
 }

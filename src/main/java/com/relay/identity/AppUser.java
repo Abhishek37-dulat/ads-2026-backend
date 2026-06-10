@@ -22,6 +22,9 @@ public class AppUser {
     @Column(name = "org_id", nullable = false)
     private UUID orgId;
 
+    @Column(name = "default_workspace_id", nullable = false)
+    private UUID defaultWorkspaceId;
+
     @Column(nullable = false, unique = true)
     private String email;
 

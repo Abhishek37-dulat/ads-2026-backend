@@ -1,9 +1,11 @@
 package com.relay.shared.realtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.relay.auth.JwtService;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArraySet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,9 +16,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 /**
- * Raw WebSocket fan-out for {@code /v1/stream}. Broadcasts launch + metric events to every
- * connected client as JSON {@code {topic, ...payload}} frames. The Next.js client uses the
- * native browser WebSocket and filters by topic.
+ * Authenticated WebSocket fan-out for {@code /v1/stream}. A client must send
+ * {@code {"type":"auth","token":"..."}} before it receives workspace-scoped events.
  */
 @Component
 public class RelayWebSocketHandler extends TextWebSocketHandler {
@@ -25,14 +26,30 @@ public class RelayWebSocketHandler extends TextWebSocketHandler {
 
     private final Set<WebSocketSession> sessions = new CopyOnWriteArraySet<>();
     private final ObjectMapper mapper;
+    private final JwtService jwt;
 
-    public RelayWebSocketHandler(ObjectMapper mapper) {
+    public RelayWebSocketHandler(ObjectMapper mapper, JwtService jwt) {
         this.mapper = mapper;
+        this.jwt = jwt;
     }
 
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
-        sessions.add(session);
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = mapper.readValue(message.getPayload(), Map.class);
+            if (!"auth".equals(body.get("type")) || !(body.get("token") instanceof String token)) {
+                throw new IllegalArgumentException("Authentication frame required");
+            }
+            UUID workspaceId = UUID.fromString(jwt.parse(token).get("workspace", String.class));
+            session.getAttributes().put("workspaceId", workspaceId);
+            synchronized (session) {
+                session.sendMessage(new TextMessage("{\"type\":\"authenticated\"}"));
+            }
+            sessions.add(session);
+        } catch (Exception e) {
+            session.close(CloseStatus.POLICY_VIOLATION);
+        }
     }
 
     @Override
@@ -40,14 +57,14 @@ public class RelayWebSocketHandler extends TextWebSocketHandler {
         sessions.remove(session);
     }
 
-    /** Broadcast an event under a topic (e.g. "launch", "metrics") to all connected clients. */
-    public void broadcast(String topic, Map<String, Object> payload) {
+    /** Broadcast an event only to authenticated clients in the target workspace. */
+    public void broadcast(UUID workspaceId, String topic, Map<String, Object> payload) {
         try {
             var frame = new java.util.HashMap<String, Object>(payload);
             frame.put("topic", topic);
             TextMessage message = new TextMessage(mapper.writeValueAsBytes(frame));
             for (WebSocketSession s : sessions) {
-                if (s.isOpen()) {
+                if (s.isOpen() && workspaceId.equals(s.getAttributes().get("workspaceId"))) {
                     synchronized (s) {
                         s.sendMessage(message);
                     }

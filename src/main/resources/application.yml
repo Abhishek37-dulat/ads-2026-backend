@@ -55,6 +55,8 @@ relay:
     # dev default; override RELAY_AUTH_JWT_SECRET in any real environment (min 32 chars)
     jwt-secret: ${RELAY_AUTH_JWT_SECRET:relay-dev-secret-change-me-0123456789-abcdef}
     jwt-ttl-days: 7
+    expose-dev-secrets: true
+    require-delivery: false
   admin:
     # platform Ops-console admin, ensured at startup; CHANGE in production
     email: ${RELAY_ADMIN_EMAIL:admin@relay.dev}

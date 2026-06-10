@@ -2,8 +2,8 @@ package com.relay.auth;
 
 import com.relay.identity.AppUser;
 import com.relay.identity.AppUserRepository;
+import com.relay.identity.TenantProvisioningService;
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
@@ -15,21 +15,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Auth flows: phone OTP (code stored in Redis) and a demo Google sign-in. Both find-or-create an
- * {@link AppUser} under the seeded demo org and map the session to the seeded demo workspace.
- *
- * <p>OTP delivery and Google token verification are simulated for the demo — the OTP is returned
- * in the response ({@code devCode}) instead of being texted. The JWT, gating and RLS are real.
+ * Auth flows: phone OTP, email/password, and Google sign-in. Each identity owns an
+ * {@link AppUser} with an isolated organization and default workspace.
  */
 @Service
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
-    // Seeded demo tenancy (see V2__seed_dev.sql).
-    private static final UUID DEMO_ORG = UUID.fromString("11111111-1111-1111-1111-111111111111");
-    private static final UUID DEMO_WORKSPACE = UUID.fromString("22222222-2222-2222-2222-222222222222");
-    private static final String DEMO_WORKSPACE_NAME = "Northstar Plumbing";
     private static final Duration OTP_TTL = Duration.ofMinutes(5);
     private static final Duration VERIFY_TTL = Duration.ofHours(24);
 
@@ -39,18 +32,27 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final MailService mail;
     private final SmsService sms;
+    private final TenantProvisioningService tenants;
     private final String appBaseUrl;
+    private final boolean exposeDevSecrets;
+    private final boolean requireDelivery;
 
     public AuthService(AppUserRepository users, JwtService jwt, StringRedisTemplate redis,
                        PasswordEncoder passwordEncoder, MailService mail, SmsService sms,
-                       @Value("${relay.app.base-url:http://localhost:8081}") String appBaseUrl) {
+                       TenantProvisioningService tenants,
+                       @Value("${relay.app.base-url:http://localhost:8081}") String appBaseUrl,
+                       @Value("${relay.auth.expose-dev-secrets:true}") boolean exposeDevSecrets,
+                       @Value("${relay.auth.require-delivery:false}") boolean requireDelivery) {
         this.users = users;
         this.jwt = jwt;
         this.redis = redis;
         this.passwordEncoder = passwordEncoder;
         this.mail = mail;
         this.sms = sms;
+        this.tenants = tenants;
         this.appBaseUrl = appBaseUrl;
+        this.exposeDevSecrets = exposeDevSecrets;
+        this.requireDelivery = requireDelivery;
     }
 
     /** Create an unverified password account and email a verification link. No session yet. */
@@ -63,15 +65,9 @@ public class AuthService {
         if (users.findByEmail(e).isPresent()) {
             throw new IllegalArgumentException("An account with this email already exists");
         }
-        AppUser u = new AppUser();
-        u.setId(UUID.randomUUID());
-        u.setOrgId(DEMO_ORG);
-        u.setEmail(e);
-        u.setName(name == null || name.isBlank() ? e.split("@")[0] : name.trim());
-        u.setPasswordHash(passwordEncoder.encode(password));
-        u.setEmailVerified(false);
-        u.setCreatedAt(OffsetDateTime.now());
-        users.save(u);
+        String displayName = displayName(e, name);
+        AppUser u = tenants.createUser(e, displayName, passwordEncoder.encode(password),
+            false, false, workspaceName(displayName));
         return sendVerification(u);
     }
 
@@ -98,8 +94,10 @@ public class AuthService {
         redis.opsForValue().set(verifyKey(token), u.getEmail(), VERIFY_TTL);
         String link = appBaseUrl + "/api/auth/verify?token=" + token;
         boolean sent = mail.sendVerification(u.getEmail(), u.getName(), link);
-        // In dev without SMTP, surface the link so the flow is still testable.
-        return new RegisterResult(u.getEmail(), sent, sent ? null : link);
+        if (!sent && requireDelivery) {
+            throw new DeliveryUnavailableException("Verification email could not be delivered");
+        }
+        return new RegisterResult(u.getEmail(), sent, !sent && exposeDevSecrets ? link : null);
     }
 
     @Transactional
@@ -145,8 +143,13 @@ public class AuthService {
         redis.opsForValue().set(otpKey(normalized), code, OTP_TTL);
         boolean sent = sms.sendOtp(normalized, code);
         if (!sent) {
-            log.info("[otp] (no SMS) code for {} is {}", normalized, code); // dev only
-            return code;
+            if (requireDelivery) {
+                throw new DeliveryUnavailableException("OTP could not be delivered");
+            }
+            if (exposeDevSecrets) {
+                log.info("[otp] (no SMS) code for {} is {}", normalized, code);
+                return code;
+            }
         }
         return null;
     }
@@ -175,10 +178,11 @@ public class AuthService {
     }
 
     private AuthResult result(AppUser user) {
-        String token = jwt.issue(user.getId(), user.getEmail(), user.getName(), DEMO_WORKSPACE,
-            DEMO_WORKSPACE_NAME, user.isAdmin());
+        var workspace = tenants.workspaceFor(user);
+        String token = jwt.issue(user.getId(), user.getEmail(), user.getName(), workspace.id(),
+            workspace.name(), user.isAdmin());
         return new AuthResult(token, user.getId(), user.getEmail(), user.getName(),
-            DEMO_WORKSPACE, DEMO_WORKSPACE_NAME, user.isAdmin());
+            workspace.id(), workspace.name(), user.isAdmin());
     }
 
     /** Ensure a platform admin account exists (idempotent) — runs at startup. */
@@ -188,10 +192,10 @@ public class AuthService {
         AppUser u = users.findByEmail(e).orElseGet(AppUser::new);
         boolean isNew = u.getId() == null;
         if (isNew) {
-            u.setId(UUID.randomUUID());
-            u.setOrgId(DEMO_ORG);
-            u.setEmail(e);
-            u.setCreatedAt(OffsetDateTime.now());
+            tenants.createUser(e, name, passwordEncoder.encode(password), true, true,
+                "Relay Operations");
+            log.info("[auth] admin account provisioned: {}", e);
+            return;
         }
         u.setName(name == null || name.isBlank() ? "Platform Admin" : name);
         u.setAdmin(true);
@@ -205,16 +209,16 @@ public class AuthService {
 
     /** Google/OTP identities are inherently verified (provider attests the identity). */
     private AppUser findOrCreate(String email, String name) {
-        return users.findByEmail(email).orElseGet(() -> {
-            AppUser u = new AppUser();
-            u.setId(UUID.randomUUID());
-            u.setOrgId(DEMO_ORG);
-            u.setEmail(email);
-            u.setName(name);
-            u.setEmailVerified(true);
-            u.setCreatedAt(OffsetDateTime.now());
-            return users.save(u);
-        });
+        return users.findByEmail(email).orElseGet(() ->
+            tenants.createUser(email, name, null, true, false, workspaceName(name)));
+    }
+
+    private static String displayName(String email, String name) {
+        return name == null || name.isBlank() ? email.split("@")[0] : name.trim();
+    }
+
+    private static String workspaceName(String name) {
+        return (name == null || name.isBlank() ? "My" : name.trim()) + " Workspace";
     }
 
     private static String verifyKey(String token) {
@@ -250,5 +254,11 @@ public class AuthService {
             this.email = email;
         }
         public String getEmail() { return email; }
+    }
+
+    public static class DeliveryUnavailableException extends RuntimeException {
+        public DeliveryUnavailableException(String message) {
+            super(message);
+        }
     }
 }
